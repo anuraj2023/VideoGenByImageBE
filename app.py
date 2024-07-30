@@ -39,6 +39,7 @@ async def simulate_ai_processing(websocket: WebSocket, filename: str):
 async def generate_video(image_path: str, output_path: str):
     ffmpeg_command = [
         "ffmpeg",
+        "-y",
         "-loop", "1",           
         "-i", image_path,       
         "-c:v", "libx264",      
