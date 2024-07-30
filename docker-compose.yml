@@ -1,0 +1,14 @@
+version: '3'
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+    environment:
+      - PYTHONUNBUFFERED=1
+
+
