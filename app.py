@@ -39,15 +39,17 @@ async def simulate_ai_processing(websocket: WebSocket, filename: str):
 async def generate_video(image_path: str, output_path: str):
     ffmpeg_command = [
     "ffmpeg",
-    "-y",                  
-    "-loop", "1",          
-    "-i", image_path,      
-    "-c:v", "libx264",     
-    "-t", "5",             
-    "-pix_fmt", "yuv420p", 
+    "-y",                    
+    "-loglevel", "verbose",  
+    "-loop", "1",            
+    "-i", image_path,        
+    "-c:v", "libx264",       
+    "-t", "5",               
+    "-pix_fmt", "yuv420p",   
     "-vf", "scale=1280:720", 
-    output_path            
+    output_path              
     ]
+
     
     process = await asyncio.create_subprocess_exec(
         *ffmpeg_command,
