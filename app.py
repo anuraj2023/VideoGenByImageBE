@@ -17,16 +17,16 @@ OUTPUT_DIR = "output"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Queue to handle image processing
+# Queue to handle multiple image processing
 image_queue = asyncio.Queue()
 websocket_clients = set()
+processed_images = set()
 
 # Simulate processing time
 async def simulate_ai_processing(websocket: WebSocket, filename: str):
     total_steps = 30
     for i in range(total_steps):
         await asyncio.sleep(1) 
-        # calculating progress percentage
         progress = int((i + 1) / total_steps * 100) 
         try:
             await websocket.send_json({"type": "progress", "value": progress, "filename": filename})
@@ -35,21 +35,19 @@ async def simulate_ai_processing(websocket: WebSocket, filename: str):
             logger.error(f"Error sending progress update for {filename}: {str(e)}")
             raise
 
-
 async def generate_video(image_path: str, output_path: str):
     ffmpeg_command = [
-    "ffmpeg",
-    "-y",                    
-    "-loglevel", "verbose",  
-    "-loop", "1",            
-    "-i", image_path,        
-    "-c:v", "libx264",       
-    "-t", "5",               
-    "-pix_fmt", "yuv420p",   
-    "-vf", "scale=1280:720", 
-    output_path              
+        "ffmpeg",
+        "-y",                    
+        "-loglevel", "verbose",  
+        "-loop", "1",            
+        "-i", image_path,        
+        "-c:v", "libx264",       
+        "-t", "5",               
+        "-pix_fmt", "yuv420p",   
+        "-vf", "scale=1280:720", 
+        output_path              
     ]
-
     
     process = await asyncio.create_subprocess_exec(
         *ffmpeg_command,
@@ -84,28 +82,32 @@ async def worker():
     while True:
         try:
             filename = await image_queue.get()
-            logger.info(f"Processing file: {filename}")
-            image_path = os.path.join(UPLOAD_DIR, filename)
-            for ws in list(websocket_clients):
+            if filename not in processed_images:
+                logger.info(f"Processing file: {filename}")
+                image_path = os.path.join(UPLOAD_DIR, filename)
                 try:
-                    video_path = await process_image(image_path, ws, filename)
-                    await ws.send_json({
-                        "type": "complete",
-                        "video_url": f"/video/{os.path.basename(video_path)}",
-                        "filename": filename
-                    })
-                    logger.info(f"Completed processing {filename}")
-                except Exception as e:
-                    logger.error(f"Error processing {filename} for a client: {str(e)}")
-                    try:
+                    video_path = await process_image(image_path, next(iter(websocket_clients)), filename)
+                    processed_images.add(filename)
+                    for ws in websocket_clients:
                         await ws.send_json({
-                            "type": "error",
-                            "message": str(e),
+                            "type": "complete",
+                            "video_url": f"/video/{os.path.basename(video_path)}",
                             "filename": filename
                         })
-                    except Exception:
-                        logger.error(f"Failed to send error message to client for {filename}")
-                        websocket_clients.discard(ws)
+                    logger.info(f"Completed processing {filename}")
+                except Exception as e:
+                    logger.error(f"Error processing {filename}: {str(e)}")
+                    for ws in websocket_clients:
+                        try:
+                            await ws.send_json({
+                                "type": "error",
+                                "message": str(e),
+                                "filename": filename
+                            })
+                        except Exception:
+                            logger.error(f"Failed to send error message to client for {filename}")
+            else:
+                logger.info(f"Skipping already processed file: {filename}")
             image_queue.task_done()
         except asyncio.CancelledError:
             logger.info("Worker task cancelled")
@@ -115,10 +117,8 @@ async def worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start worker task
     worker_task = asyncio.create_task(worker())
     yield
-    # Shutdown worker task
     worker_task.cancel()
     try:
         await worker_task
@@ -163,6 +163,12 @@ async def websocket_endpoint(websocket: WebSocket):
     websocket_clients.add(websocket)
     logger.info("New WebSocket connection established")
     try:
+        for filename in processed_images:
+            await websocket.send_json({
+                "type": "complete",
+                "video_url": f"/video/{filename.replace('.png', '.mp4')}",
+                "filename": filename
+            })
         while True:
             message = await websocket.receive_text()
             logger.info(f"Received message from client: {message}")
@@ -191,4 +197,4 @@ async def get_video(video_name: str, range: str = Header(None)):
     )
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
