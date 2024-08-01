@@ -67,9 +67,13 @@ async def process_image(image_path: str, websocket: WebSocket, filename: str):
         
         await generate_video(image_path, output_path)
         
-        # Final progress sent update after video generation
+        # Final progress update after video generation
         await websocket.send_json({"type": "progress", "value": 100, "filename": filename})
-        
+        return output_path
+    except WebSocketDisconnect:
+        logger.warning(f"WebSocket disconnected during processing of {filename}")
+        # Continue video processing even after websocket error
+        await generate_video(image_path, output_path)
         return output_path
     except Exception as e:
         logger.exception(f"Error in process_image: {str(e)}")
@@ -163,10 +167,19 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     return {"files": filenames}
 
+async def keepalive(websocket: WebSocket):
+    while True:
+        try:
+            await asyncio.sleep(20)
+            await websocket.send_json({"type": "ping"})
+        except Exception:
+            break
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     websocket_clients.add(websocket)
+    keepalive_task = asyncio.create_task(keepalive(websocket))
     logger.info("New WebSocket connection established")
     try:
         for filename in processed_images:
@@ -185,6 +198,8 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.exception(f"WebSocket error: {str(e)}")
     finally:
+        websocket_clients.remove(websocket)
+        keepalive_task.cancel()
         websocket_clients.remove(websocket)
         logger.info("WebSocket connection closed")
 
