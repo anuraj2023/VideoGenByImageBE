@@ -22,18 +22,6 @@ image_queue = asyncio.Queue()
 websocket_clients = set()
 processed_images = set()
 
-async def simulate_ai_processing(websocket: WebSocket, filename: str):
-    total_steps = 10 
-    for i in range(total_steps):
-        await asyncio.sleep(3)  # Sleep for 3 seconds
-        progress = int((i + 1) / total_steps * 100) 
-        try:
-            await websocket.send_json({"type": "progress", "value": progress, "filename": filename})
-            logger.info(f"Sent progress update for {filename}: {progress}%")
-        except Exception as e:
-            logger.error(f"Error sending progress update for {filename}: {str(e)}")
-            raise
-
 async def generate_video(image_path: str, output_path: str):
     ffmpeg_command = [
         "ffmpeg",
@@ -69,8 +57,17 @@ async def process_image(image_path: str, websocket: WebSocket, filename: str):
     output_path = os.path.join(OUTPUT_DIR, f"{os.path.splitext(os.path.basename(image_path))[0]}.mp4")
     
     try:
-        await simulate_ai_processing(websocket, filename)
+        total_steps = 11
+        for i in range(10):
+            await asyncio.sleep(3)
+            progress = int((i + 1) / total_steps * 100)
+            await websocket.send_json({"type": "progress", "value": progress, "filename": filename})
+        
         await generate_video(image_path, output_path)
+        
+        # Final progress sent update after video generation
+        await websocket.send_json({"type": "progress", "value": 100, "filename": filename})
+        
         return output_path
     except Exception as e:
         logger.exception(f"Error in process_image: {str(e)}")
