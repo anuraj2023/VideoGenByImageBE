@@ -22,11 +22,10 @@ image_queue = asyncio.Queue()
 websocket_clients = set()
 processed_images = set()
 
-# Simulate processing time
 async def simulate_ai_processing(websocket: WebSocket, filename: str):
-    total_steps = 30
+    total_steps = 1
     for i in range(total_steps):
-        await asyncio.sleep(1) 
+        await asyncio.sleep(3)  # Sleep for 3 seconds
         progress = int((i + 1) / total_steps * 100) 
         try:
             await websocket.send_json({"type": "progress", "value": progress, "filename": filename})
