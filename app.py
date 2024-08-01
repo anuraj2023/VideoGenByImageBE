@@ -4,9 +4,11 @@ import logging
 from fastapi import FastAPI, File, UploadFile, WebSocket, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.websockets import WebSocketState
 import uvicorn
 from typing import List
 from contextlib import asynccontextmanager
+from starlette.websockets import WebSocketDisconnect
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -82,26 +84,34 @@ async def worker():
                 logger.info(f"Processing file: {filename}")
                 image_path = os.path.join(UPLOAD_DIR, filename)
                 try:
-                    video_path = await process_image(image_path, next(iter(websocket_clients)), filename)
-                    processed_images.add(filename)
-                    for ws in websocket_clients:
-                        await ws.send_json({
-                            "type": "complete",
-                            "video_url": f"/video/{os.path.basename(video_path)}",
-                            "filename": filename
-                        })
-                    logger.info(f"Completed processing {filename}")
+                    # Using a copy of websocket_clients to avoid RuntimeError
+                    clients = websocket_clients.copy()
+                    if clients:
+                        websocket = next(iter(clients))
+                        video_path = await process_image(image_path, websocket, filename)
+                        processed_images.add(filename)
+                        for ws in clients:
+                            if ws.client.state.code == WebSocketState.CONNECTED:
+                                await ws.send_json({
+                                    "type": "complete",
+                                    "video_url": f"/video/{os.path.basename(video_path)}",
+                                    "filename": filename
+                                })
+                        logger.info(f"Completed processing {filename}")
+                    else:
+                        logger.warning("No WebSocket clients connected. Skipping processing.")
                 except Exception as e:
                     logger.error(f"Error processing {filename}: {str(e)}")
-                    for ws in websocket_clients:
-                        try:
-                            await ws.send_json({
-                                "type": "error",
-                                "message": str(e),
-                                "filename": filename
-                            })
-                        except Exception:
-                            logger.error(f"Failed to send error message to client for {filename}")
+                    for ws in websocket_clients.copy():
+                        if ws.client.state.code == WebSocketState.CONNECTED:
+                            try:
+                                await ws.send_json({
+                                    "type": "error",
+                                    "message": str(e),
+                                    "filename": filename
+                                })
+                            except Exception:
+                                logger.error(f"Failed to send error message to client for {filename}")
             else:
                 logger.info(f"Skipping already processed file: {filename}")
             image_queue.task_done()
@@ -166,8 +176,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 "filename": filename
             })
         while True:
-            message = await websocket.receive_text()
-            logger.info(f"Received message from client: {message}")
+            try:
+                message = await websocket.receive_text()
+                logger.info(f"Received message from client: {message}")
+            except WebSocketDisconnect:
+                logger.info("WebSocket disconnected")
+                break
     except Exception as e:
         logger.exception(f"WebSocket error: {str(e)}")
     finally:
