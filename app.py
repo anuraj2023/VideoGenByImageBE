@@ -23,7 +23,7 @@ websocket_clients = set()
 processed_images = set()
 
 async def simulate_ai_processing(websocket: WebSocket, filename: str):
-    total_steps = 1
+    total_steps = 10 
     for i in range(total_steps):
         await asyncio.sleep(3)  # Sleep for 3 seconds
         progress = int((i + 1) / total_steps * 100) 
