@@ -188,60 +188,41 @@ async def websocket_endpoint(websocket: WebSocket):
     
     logger.info(f"New WebSocket connection attempt: {id(websocket)}")
     
-    if current_client is not None:
-        logger.info(f"Rejecting connection, current client exists: {id(current_client)}")
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "message": "Another client is already connected"})
-        await websocket.close()
-        return
-
     try:
         await websocket.accept()
         logger.info(f"WebSocket connection accepted: {id(websocket)}")
+        
+        if current_client is not None:
+            logger.info(f"Rejecting connection, current client exists: {id(current_client)}")
+            await websocket.send_json({"type": "error", "message": "Another client is already connected"})
+            await websocket.close(code=1000, reason="Another client is already connected")
+            return
+
         current_client = websocket
         websocket_clients.add(websocket)
         
-        keepalive_task = asyncio.create_task(keepalive(websocket))
-        
-        # Initial message to confirm connection
+        # Send an initial message to confirm connection
         await websocket.send_json({"type": "connection", "status": "established"})
         
         logger.info(f"WebSocket connection fully established: {id(websocket)}")
-
-        for filename in processed_images:
-            try:
-                await websocket.send_json({
-                    "type": "complete",
-                    "video_url": f"/video/{filename.replace('.png', '.mp4')}",
-                    "filename": filename
-                })
-            except WebSocketDisconnect:
-                logger.info(f"WebSocket disconnected while sending processed images: {id(websocket)}")
-                break
-            except Exception as e:
-                logger.error(f"Error sending processed image info: {str(e)}")
 
         while True:
             try:
                 message = await websocket.receive_text()
                 logger.info(f"Received message from client {id(websocket)}: {message}")
+                # Process the message here
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected: {id(websocket)}")
                 break
             except Exception as e:
-                logger.error(f"Error receiving message: {str(e)}")
+                logger.error(f"Error processing message: {str(e)}")
                 break
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected during connection setup: {id(websocket)}")
     except Exception as e:
         logger.exception(f"Unexpected error in WebSocket connection: {str(e)}")
     finally:
-        if 'keepalive_task' in locals():
-            keepalive_task.cancel()
-            try:
-                await keepalive_task
-            except asyncio.CancelledError:
-                pass
         websocket_clients.discard(websocket)
         if current_client == websocket:
             current_client = None
