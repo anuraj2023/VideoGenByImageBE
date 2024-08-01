@@ -4,7 +4,6 @@ import logging
 from fastapi import FastAPI, File, UploadFile, WebSocket, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.websockets import WebSocketState
 import uvicorn
 from typing import List
 from contextlib import asynccontextmanager
@@ -95,27 +94,28 @@ async def worker():
                         video_path = await process_image(image_path, websocket, filename)
                         processed_images.add(filename)
                         for ws in clients:
-                            if ws.client.state.code == WebSocketState.CONNECTED:
+                            try:
                                 await ws.send_json({
                                     "type": "complete",
                                     "video_url": f"/video/{os.path.basename(video_path)}",
                                     "filename": filename
                                 })
+                            except Exception as e:
+                                logger.error(f"Failed to send completion message to a client: {str(e)}")
                         logger.info(f"Completed processing {filename}")
                     else:
                         logger.warning("No WebSocket clients connected. Skipping processing.")
                 except Exception as e:
                     logger.error(f"Error processing {filename}: {str(e)}")
                     for ws in websocket_clients.copy():
-                        if ws.client.state.code == WebSocketState.CONNECTED:
-                            try:
-                                await ws.send_json({
-                                    "type": "error",
-                                    "message": str(e),
-                                    "filename": filename
-                                })
-                            except Exception:
-                                logger.error(f"Failed to send error message to client for {filename}")
+                        try:
+                            await ws.send_json({
+                                "type": "error",
+                                "message": str(e),
+                                "filename": filename
+                            })
+                        except Exception:
+                            logger.error(f"Failed to send error message to client for {filename}")
             else:
                 logger.info(f"Skipping already processed file: {filename}")
             image_queue.task_done()
