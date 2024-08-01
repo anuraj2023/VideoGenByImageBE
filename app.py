@@ -170,9 +170,14 @@ async def upload_files(files: List[UploadFile] = File(...)):
 async def keepalive(websocket: WebSocket):
     while True:
         try:
-            await asyncio.sleep(20)
+            await asyncio.sleep(30)
             await websocket.send_json({"type": "ping"})
-        except Exception:
+            logger.debug(f"Ping sent to WebSocket {id(websocket)}")
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket disconnected during keepalive: {id(websocket)}")
+            break
+        except Exception as e:
+            logger.error(f"Error in keepalive for WebSocket {id(websocket)}: {str(e)}")
             break
 
 @app.websocket("/ws")
@@ -180,28 +185,41 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     websocket_clients.add(websocket)
     keepalive_task = asyncio.create_task(keepalive(websocket))
-    logger.info("New WebSocket connection established")
+    logger.info(f"New WebSocket connection established: {id(websocket)}")
     try:
         for filename in processed_images:
-            await websocket.send_json({
-                "type": "complete",
-                "video_url": f"/video/{filename.replace('.png', '.mp4')}",
-                "filename": filename
-            })
+            try:
+                await websocket.send_json({
+                    "type": "complete",
+                    "video_url": f"/video/{filename.replace('.png', '.mp4')}",
+                    "filename": filename
+                })
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected while sending processed images: {id(websocket)}")
+                break
+            except Exception as e:
+                logger.error(f"Error sending processed image info: {str(e)}")
+
         while True:
             try:
                 message = await websocket.receive_text()
-                logger.info(f"Received message from client: {message}")
+                logger.info(f"Received message from client {id(websocket)}: {message}")
             except WebSocketDisconnect:
-                logger.info("WebSocket disconnected")
+                logger.info(f"WebSocket disconnected: {id(websocket)}")
+                break
+            except Exception as e:
+                logger.error(f"Error receiving message: {str(e)}")
                 break
     except Exception as e:
-        logger.exception(f"WebSocket error: {str(e)}")
+        logger.exception(f"WebSocket error for {id(websocket)}: {str(e)}")
     finally:
-        websocket_clients.remove(websocket)
         keepalive_task.cancel()
-        websocket_clients.remove(websocket)
-        logger.info("WebSocket connection closed")
+        try:
+            await keepalive_task
+        except asyncio.CancelledError:
+            pass
+        websocket_clients.discard(websocket)
+        logger.info(f"WebSocket connection closed and removed from clients: {id(websocket)}")
 
 @app.get("/video/{video_name}")
 async def get_video(video_name: str, range: str = Header(None)):
