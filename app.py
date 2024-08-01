@@ -23,6 +23,8 @@ image_queue = asyncio.Queue()
 websocket_clients = set()
 processed_images = set()
 
+current_client = None
+
 async def generate_video(image_path: str, output_path: str):
     ffmpeg_command = [
         "ffmpeg",
@@ -182,7 +184,16 @@ async def keepalive(websocket: WebSocket):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    global current_client
+    
+    if current_client is not None:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": "Another client is already connected"})
+        await websocket.close()
+        return
+
     await websocket.accept()
+    current_client = websocket
     websocket_clients.add(websocket)
     keepalive_task = asyncio.create_task(keepalive(websocket))
     logger.info(f"New WebSocket connection established: {id(websocket)}")
@@ -219,6 +230,8 @@ async def websocket_endpoint(websocket: WebSocket):
         except asyncio.CancelledError:
             pass
         websocket_clients.discard(websocket)
+        if current_client == websocket:
+            current_client = None
         logger.info(f"WebSocket connection closed and removed from clients: {id(websocket)}")
 
 @app.get("/video/{video_name}")
