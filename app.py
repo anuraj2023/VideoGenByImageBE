@@ -256,6 +256,15 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.accept()
         logger.info(f"WebSocket connection accepted: {id(websocket)}")
         
+        # Wait for the initial message from the client
+        initial_message = await websocket.receive_json()
+        logger.info(f"Received initial message: {initial_message}")
+        
+        if initial_message.get('type') != 'init':
+            logger.warning(f"Unexpected initial message: {initial_message}")
+            await websocket.close(code=1003, reason="Invalid initial message")
+            return
+        
         if current_client is not None:
             logger.info(f"Rejecting connection, current client exists: {id(current_client)}")
             await websocket.send_json({"type": "error", "message": "Another client is already connected"})
@@ -276,6 +285,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.info(f"Received message from client {id(websocket)}: {message}")
                 if message.get('type') == 'ping':
                     await websocket.send_json({"type": "pong"})
+                else:
+                    # Process other message types here
+                    pass
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected: {id(websocket)}")
                 break
