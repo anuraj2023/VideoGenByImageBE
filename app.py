@@ -169,64 +169,14 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     return {"files": filenames}
 
-async def keepalive(websocket: WebSocket):
+async def keepalive():
     while True:
-        try:
-            await asyncio.sleep(30)
-            await websocket.send_json({"type": "ping"})
-            logger.debug(f"Ping sent to WebSocket {id(websocket)}")
-        except WebSocketDisconnect:
-            logger.info(f"WebSocket disconnected during keepalive: {id(websocket)}")
-            break
-        except Exception as e:
-            logger.error(f"Error in keepalive for WebSocket {id(websocket)}: {str(e)}")
-            break
-
-# @app.websocket("/ws")
-# async def websocket_endpoint(websocket: WebSocket):
-#     global current_client
-    
-#     logger.info(f"New WebSocket connection attempt: {id(websocket)}")
-    
-#     try:
-#         await websocket.accept()
-#         logger.info(f"WebSocket connection accepted: {id(websocket)}")
-        
-#         if current_client is not None:
-#             logger.info(f"Rejecting connection, current client exists: {id(current_client)}")
-#             await websocket.send_json({"type": "error", "message": "Another client is already connected"})
-#             await websocket.close(code=1000, reason="Another client is already connected")
-#             return
-
-#         current_client = websocket
-#         websocket_clients.add(websocket)
-        
-#         # Send an initial message to confirm connection
-#         await websocket.send_json({"type": "connection", "status": "established"})
-        
-#         logger.info(f"WebSocket connection fully established: {id(websocket)}")
-
-#         while True:
-#             try:
-#                 message = await websocket.receive_text()
-#                 logger.info(f"Received message from client {id(websocket)}: {message}")
-#                 # Process the message here
-#             except WebSocketDisconnect:
-#                 logger.info(f"WebSocket disconnected: {id(websocket)}")
-#                 break
-#             except Exception as e:
-#                 logger.error(f"Error processing message: {str(e)}")
-#                 break
-
-#     except WebSocketDisconnect:
-#         logger.info(f"WebSocket disconnected during connection setup: {id(websocket)}")
-#     except Exception as e:
-#         logger.exception(f"Unexpected error in WebSocket connection: {str(e)}")
-#     finally:
-#         websocket_clients.discard(websocket)
-#         if current_client == websocket:
-#             current_client = None
-#         logger.info(f"WebSocket connection closed and removed from clients: {id(websocket)}")
+        for websocket in websocket_clients:
+            try:
+                await websocket.send_json({"type": "keepalive"})
+            except Exception:
+                pass
+        await asyncio.sleep(30)
 
 @app.get("/video/{video_name}")
 async def get_video(video_name: str, range: str = Header(None)):
@@ -291,15 +241,13 @@ async def websocket_endpoint(websocket: WebSocket):
         
         logger.info(f"WebSocket connection fully established: {id(websocket)}")
 
+        # Keep the connection alive
         while True:
             try:
                 message = await websocket.receive_json()
                 logger.info(f"Received message from client {id(websocket)}: {message}")
                 if message.get('type') == 'ping':
                     await websocket.send_json({"type": "pong"})
-                else:
-                    # Process other message types here
-                    pass
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected: {id(websocket)}")
                 break
@@ -317,6 +265,10 @@ async def websocket_endpoint(websocket: WebSocket):
         if current_client == websocket:
             current_client = None
         logger.info(f"WebSocket connection closed and removed from clients: {id(websocket)}")
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(keepalive())
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
