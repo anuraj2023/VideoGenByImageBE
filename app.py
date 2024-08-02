@@ -256,13 +256,25 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.accept()
         logger.info(f"WebSocket connection accepted: {id(websocket)}")
         
-        # Wait for the initial message from the client
-        initial_message = await websocket.receive_json()
-        logger.info(f"Received initial message: {initial_message}")
-        
-        if initial_message.get('type') != 'init':
-            logger.warning(f"Unexpected initial message: {initial_message}")
-            await websocket.close(code=1003, reason="Invalid initial message")
+        try:
+            # Wait for the initial message from the client with a timeout
+            initial_message = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+            logger.info(f"Received initial message: {initial_message}")
+            
+            if initial_message.get('type') != 'init':
+                logger.warning(f"Unexpected initial message: {initial_message}")
+                await websocket.send_json({"type": "error", "message": "Invalid initial message"})
+                await websocket.close(code=1003, reason="Invalid initial message")
+                return
+        except asyncio.TimeoutError:
+            logger.warning("Timeout waiting for initial message")
+            await websocket.send_json({"type": "error", "message": "Timeout waiting for initial message"})
+            await websocket.close(code=1001, reason="Timeout waiting for initial message")
+            return
+        except Exception as e:
+            logger.exception(f"Error receiving initial message: {str(e)}")
+            await websocket.send_json({"type": "error", "message": "Error receiving initial message"})
+            await websocket.close(code=1011, reason="Error receiving initial message")
             return
         
         if current_client is not None:
@@ -293,6 +305,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 break
             except Exception as e:
                 logger.error(f"Error processing message: {str(e)}")
+                await websocket.send_json({"type": "error", "message": f"Error processing message: {str(e)}"})
                 break
 
     except WebSocketDisconnect:
